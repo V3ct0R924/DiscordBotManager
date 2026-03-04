@@ -64,16 +64,15 @@ jobs:
       - name: "[macOS] Convert icon to icns"
         if: matrix.os == 'macos-latest'
         run: |
-          mkdir -p icon.iconset
-          python3 - << 'EOF'
+          python3 -c "
           from PIL import Image
           import os
-          img = Image.open("icon.ico").convert("RGBA")
+          img = Image.open('icon.ico').convert('RGBA')
           sizes = [16, 32, 64, 128, 256, 512]
-          os.makedirs("icon.iconset", exist_ok=True)
+          os.makedirs('icon.iconset', exist_ok=True)
           for s in sizes:
-              img.resize((s, s)).save(f"icon.iconset/icon_{s}x{s}.png")
-          EOF
+              img.resize((s, s)).save(f'icon.iconset/icon_{s}x{s}.png')
+          "
           iconutil -c icns icon.iconset -o icon.icns
 
       - name: "[macOS] Build .app with PyInstaller"
@@ -128,11 +127,11 @@ jobs:
       - name: "[Linux] Convert icon to PNG"
         if: matrix.os == 'ubuntu-latest'
         run: |
-          python3 - << 'EOF'
+          python3 -c "
           from PIL import Image
-          img = Image.open("icon.ico").convert("RGBA")
-          img.resize((256, 256)).save("icon.png")
-          EOF
+          img = Image.open('icon.ico').convert('RGBA')
+          img.resize((256, 256)).save('icon.png')
+          "
 
       - name: "[Linux] Package as AppImage"
         if: matrix.os == 'ubuntu-latest'
@@ -146,19 +145,9 @@ jobs:
           cp dist/BotManager AppDir/usr/bin/BotManager
           cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/botmanager.png
 
-          cat > AppDir/BotManager.desktop << EOF
-[Desktop Entry]
-Name=Discord Bot Manager
-Exec=BotManager
-Icon=botmanager
-Type=Application
-Categories=Utility;
-EOF
+          printf '[Desktop Entry]\nName=Discord Bot Manager\nExec=BotManager\nIcon=botmanager\nType=Application\nCategories=Utility;\n' > AppDir/BotManager.desktop
 
-          cat > AppDir/AppRun << EOF
-#!/bin/bash
-exec "\$(dirname "\$0")/usr/bin/BotManager" "\$@"
-EOF
+          printf '#!/bin/bash\nexec "$(dirname "$0")/usr/bin/BotManager" "$@"\n' > AppDir/AppRun
           chmod +x AppDir/AppRun
 
           ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir BotManager-Linux.AppImage
