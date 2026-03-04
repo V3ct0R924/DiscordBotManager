@@ -1,6 +1,5 @@
 name: Build & Release
 
-# Se dispara solo al publicar una release en GitHub
 on:
   release:
     types: [published]
@@ -8,21 +7,17 @@ on:
 jobs:
   build:
     strategy:
-      fail-fast: false   # si falla un OS, los otros siguen igual
+      fail-fast: false
       matrix:
         include:
-
-          # ── Windows → .exe empaquetado con Inno Setup ──────────────
           - os:       windows-latest
             name:     Windows
             artifact: BotManager-Windows-Setup.exe
 
-          # ── macOS → .dmg ───────────────────────────────────────────
           - os:       macos-latest
             name:     macOS
             artifact: BotManager-macOS.dmg
 
-          # ── Linux → .AppImage ──────────────────────────────────────
           - os:       ubuntu-latest
             name:     Linux
             artifact: BotManager-Linux.AppImage
@@ -32,24 +27,18 @@ jobs:
 
     steps:
 
-      # 1. Clonar el repo
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Python 3.11 en los tres sistemas
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 3. Dependencias comunes
       - name: Install Python dependencies
         run: pip install pyinstaller psutil pystray pillow
 
-      # ════════════════════════════════════════════════════════════════
       # WINDOWS
-      # ════════════════════════════════════════════════════════════════
-
       - name: "[Windows] Build .exe with PyInstaller"
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -65,26 +54,35 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          # Copiar el .exe al directorio donde está el .iss
           Copy-Item dist\BotManager.exe -Destination BotManager.exe
-          # Compilar el instalador
+          New-Item -ItemType Directory -Force -Path installer_output
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" BotManager.iss
-          # Renombrar el output al nombre del artifact
           $setup = Get-ChildItem installer_output\*.exe | Select-Object -First 1
-          Rename-Item $setup.FullName "BotManager-Windows-Setup.exe"
-          Copy-Item "installer_output\BotManager-Windows-Setup.exe" -Destination "BotManager-Windows-Setup.exe"
+          Copy-Item $setup.FullName -Destination "BotManager-Windows-Setup.exe"
 
-      # ════════════════════════════════════════════════════════════════
       # macOS
-      # ════════════════════════════════════════════════════════════════
+      - name: "[macOS] Convert icon to icns"
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p icon.iconset
+          python3 - << 'EOF'
+          from PIL import Image
+          import os
+          img = Image.open("icon.ico").convert("RGBA")
+          sizes = [16, 32, 64, 128, 256, 512]
+          os.makedirs("icon.iconset", exist_ok=True)
+          for s in sizes:
+              img.resize((s, s)).save(f"icon.iconset/icon_{s}x{s}.png")
+          EOF
+          iconutil -c icns icon.iconset -o icon.icns
 
       - name: "[macOS] Build .app with PyInstaller"
         if: matrix.os == 'macos-latest'
         env:
           FEEDBACK_WEBHOOK: ${{ secrets.FEEDBACK_WEBHOOK }}
         run: |
-          pyinstaller --onefile --windowed \
-            --icon=icon.ico \
+          pyinstaller --windowed \
+            --icon=icon.icns \
             --name BotManager \
             main.py
 
@@ -95,11 +93,8 @@ jobs:
       - name: "[macOS] Create .dmg"
         if: matrix.os == 'macos-latest'
         run: |
-          # create-dmg espera un .app — PyInstaller genera dist/BotManager.app
-          # con --windowed en macOS
           create-dmg \
             --volname "Bot Manager" \
-            --volicon "icon.ico" \
             --window-pos 200 120 \
             --window-size 600 400 \
             --icon-size 100 \
@@ -107,12 +102,9 @@ jobs:
             --hide-extension "BotManager.app" \
             --app-drop-link 425 190 \
             "BotManager-macOS.dmg" \
-            "dist/"
+            "dist/BotManager.app"
 
-      # ════════════════════════════════════════════════════════════════
-      # Linux
-      # ════════════════════════════════════════════════════════════════
-
+      # LINUX
       - name: "[Linux] Install system dependencies"
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -133,44 +125,45 @@ jobs:
             --name BotManager \
             main.py
 
+      - name: "[Linux] Convert icon to PNG"
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 - << 'EOF'
+          from PIL import Image
+          img = Image.open("icon.ico").convert("RGBA")
+          img.resize((256, 256)).save("icon.png")
+          EOF
+
       - name: "[Linux] Package as AppImage"
         if: matrix.os == 'ubuntu-latest'
         run: |
-          # Descargar appimagetool
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool-x86_64.AppImage
 
-          # Estructura requerida por AppImage
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
 
           cp dist/BotManager AppDir/usr/bin/BotManager
-          cp icon.ico AppDir/usr/share/icons/hicolor/256x256/apps/botmanager.png || true
+          cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/botmanager.png
 
-          # .desktop file (requerido por AppImage)
-          cat > AppDir/BotManager.desktop << 'EOF'
-          [Desktop Entry]
-          Name=Discord Bot Manager
-          Exec=BotManager
-          Icon=botmanager
-          Type=Application
-          Categories=Utility;
-          EOF
+          cat > AppDir/BotManager.desktop << EOF
+[Desktop Entry]
+Name=Discord Bot Manager
+Exec=BotManager
+Icon=botmanager
+Type=Application
+Categories=Utility;
+EOF
 
-          # AppRun (entry point del AppImage)
-          cat > AppDir/AppRun << 'EOF'
-          #!/bin/bash
-          exec "$(dirname "$0")/usr/bin/BotManager" "$@"
-          EOF
+          cat > AppDir/AppRun << EOF
+#!/bin/bash
+exec "\$(dirname "\$0")/usr/bin/BotManager" "\$@"
+EOF
           chmod +x AppDir/AppRun
 
-          # Empaquetar
           ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir BotManager-Linux.AppImage
 
-      # ════════════════════════════════════════════════════════════════
-      # SUBIR A LA RELEASE (los tres sistemas)
-      # ════════════════════════════════════════════════════════════════
-
+      # SUBIR A LA RELEASE
       - name: Upload artifact to release
         uses: softprops/action-gh-release@v2
         with:
