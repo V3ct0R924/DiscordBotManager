@@ -1,0 +1,179 @@
+name: Build & Release
+
+# Se dispara solo al publicar una release en GitHub
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false   # si falla un OS, los otros siguen igual
+      matrix:
+        include:
+
+          # ── Windows → .exe empaquetado con Inno Setup ──────────────
+          - os:       windows-latest
+            name:     Windows
+            artifact: BotManager-Windows-Setup.exe
+
+          # ── macOS → .dmg ───────────────────────────────────────────
+          - os:       macos-latest
+            name:     macOS
+            artifact: BotManager-macOS.dmg
+
+          # ── Linux → .AppImage ──────────────────────────────────────
+          - os:       ubuntu-latest
+            name:     Linux
+            artifact: BotManager-Linux.AppImage
+
+    runs-on: ${{ matrix.os }}
+    name:    Build for ${{ matrix.name }}
+
+    steps:
+
+      # 1. Clonar el repo
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Python 3.11 en los tres sistemas
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. Dependencias comunes
+      - name: Install Python dependencies
+        run: pip install pyinstaller psutil pystray pillow
+
+      # ════════════════════════════════════════════════════════════════
+      # WINDOWS
+      # ════════════════════════════════════════════════════════════════
+
+      - name: "[Windows] Build .exe with PyInstaller"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          FEEDBACK_WEBHOOK: ${{ secrets.FEEDBACK_WEBHOOK }}
+        run: |
+          pyinstaller --onefile --windowed `
+            --icon=icon.ico `
+            --name BotManager `
+            main.py
+
+      - name: "[Windows] Build installer with Inno Setup"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          # Copiar el .exe al directorio donde está el .iss
+          Copy-Item dist\BotManager.exe -Destination BotManager.exe
+          # Compilar el instalador
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" BotManager.iss
+          # Renombrar el output al nombre del artifact
+          $setup = Get-ChildItem installer_output\*.exe | Select-Object -First 1
+          Rename-Item $setup.FullName "BotManager-Windows-Setup.exe"
+          Copy-Item "installer_output\BotManager-Windows-Setup.exe" -Destination "BotManager-Windows-Setup.exe"
+
+      # ════════════════════════════════════════════════════════════════
+      # macOS
+      # ════════════════════════════════════════════════════════════════
+
+      - name: "[macOS] Build .app with PyInstaller"
+        if: matrix.os == 'macos-latest'
+        env:
+          FEEDBACK_WEBHOOK: ${{ secrets.FEEDBACK_WEBHOOK }}
+        run: |
+          pyinstaller --onefile --windowed \
+            --icon=icon.ico \
+            --name BotManager \
+            main.py
+
+      - name: "[macOS] Install create-dmg"
+        if: matrix.os == 'macos-latest'
+        run: brew install create-dmg
+
+      - name: "[macOS] Create .dmg"
+        if: matrix.os == 'macos-latest'
+        run: |
+          # create-dmg espera un .app — PyInstaller genera dist/BotManager.app
+          # con --windowed en macOS
+          create-dmg \
+            --volname "Bot Manager" \
+            --volicon "icon.ico" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "BotManager.app" 175 190 \
+            --hide-extension "BotManager.app" \
+            --app-drop-link 425 190 \
+            "BotManager-macOS.dmg" \
+            "dist/"
+
+      # ════════════════════════════════════════════════════════════════
+      # Linux
+      # ════════════════════════════════════════════════════════════════
+
+      - name: "[Linux] Install system dependencies"
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            python3-tk \
+            libgtk-3-dev \
+            libappindicator3-dev \
+            fuse \
+            libfuse2
+
+      - name: "[Linux] Build binary with PyInstaller"
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          FEEDBACK_WEBHOOK: ${{ secrets.FEEDBACK_WEBHOOK }}
+        run: |
+          pyinstaller --onefile \
+            --name BotManager \
+            main.py
+
+      - name: "[Linux] Package as AppImage"
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # Descargar appimagetool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+          # Estructura requerida por AppImage
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+
+          cp dist/BotManager AppDir/usr/bin/BotManager
+          cp icon.ico AppDir/usr/share/icons/hicolor/256x256/apps/botmanager.png || true
+
+          # .desktop file (requerido por AppImage)
+          cat > AppDir/BotManager.desktop << 'EOF'
+          [Desktop Entry]
+          Name=Discord Bot Manager
+          Exec=BotManager
+          Icon=botmanager
+          Type=Application
+          Categories=Utility;
+          EOF
+
+          # AppRun (entry point del AppImage)
+          cat > AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          exec "$(dirname "$0")/usr/bin/BotManager" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+
+          # Empaquetar
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir BotManager-Linux.AppImage
+
+      # ════════════════════════════════════════════════════════════════
+      # SUBIR A LA RELEASE (los tres sistemas)
+      # ════════════════════════════════════════════════════════════════
+
+      - name: Upload artifact to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
