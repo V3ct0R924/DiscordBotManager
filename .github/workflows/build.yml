@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -38,7 +41,7 @@ jobs:
       - name: Install Python dependencies
         run: pip install pyinstaller psutil pystray pillow
 
-      # WINDOWS
+      # ── WINDOWS ──────────────────────────────────────────────────────
       - name: "[Windows] Build .exe with PyInstaller"
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -58,9 +61,10 @@ jobs:
           New-Item -ItemType Directory -Force -Path installer_output
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" BotManager.iss
           $setup = Get-ChildItem installer_output\*.exe | Select-Object -First 1
+          if ($null -eq $setup) { throw "Inno Setup did not produce an output .exe" }
           Copy-Item $setup.FullName -Destination "BotManager-Windows-Setup.exe"
 
-      # macOS
+      # ── macOS ─────────────────────────────────────────────────────────
       - name: "[macOS] Convert icon to icns"
         if: matrix.os == 'macos-latest'
         run: |
@@ -103,17 +107,12 @@ jobs:
             "BotManager-macOS.dmg" \
             "dist/BotManager.app"
 
-      # LINUX
+      # ── LINUX ─────────────────────────────────────────────────────────
       - name: "[Linux] Install system dependencies"
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y \
-            python3-tk \
-            libgtk-3-dev \
-            libappindicator3-dev \
-            fuse \
-            libfuse2
+          sudo apt-get install -y python3-tk libgtk-3-dev libappindicator3-dev fuse libfuse2
 
       - name: "[Linux] Build binary with PyInstaller"
         if: matrix.os == 'ubuntu-latest'
@@ -144,15 +143,15 @@ jobs:
 
           cp dist/BotManager AppDir/usr/bin/BotManager
           cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/botmanager.png
+          cp icon.png AppDir/botmanager.png
 
           printf '[Desktop Entry]\nName=Discord Bot Manager\nExec=BotManager\nIcon=botmanager\nType=Application\nCategories=Utility;\n' > AppDir/BotManager.desktop
-
           printf '#!/bin/bash\nexec "$(dirname "$0")/usr/bin/BotManager" "$@"\n' > AppDir/AppRun
           chmod +x AppDir/AppRun
 
           ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir BotManager-Linux.AppImage
 
-      # SUBIR A LA RELEASE
+      # ── SUBIR A LA RELEASE ────────────────────────────────────────────
       - name: Upload artifact to release
         uses: softprops/action-gh-release@v2
         with:
