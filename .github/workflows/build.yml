@@ -50,6 +50,7 @@ jobs:
         run: |
           pyinstaller --onefile --windowed `
             --icon=icon.ico `
+            --add-data "languages.json;." `
             --name BotManager `
             main.py
 
@@ -86,6 +87,7 @@ jobs:
         run: |
           pyinstaller --windowed \
             --icon=icon.icns \
+            --add-data "languages.json:." \
             --name BotManager \
             main.py
 
@@ -120,6 +122,7 @@ jobs:
           FEEDBACK_WEBHOOK: ${{ secrets.FEEDBACK_WEBHOOK }}
         run: |
           pyinstaller --onefile \
+            --add-data "languages.json:." \
             --name BotManager \
             main.py
 
